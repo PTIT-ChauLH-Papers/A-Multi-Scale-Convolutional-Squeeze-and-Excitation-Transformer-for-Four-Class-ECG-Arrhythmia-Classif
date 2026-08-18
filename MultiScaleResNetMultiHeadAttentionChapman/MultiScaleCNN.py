@@ -70,17 +70,17 @@ class MultiScaleCNN(nn.Module):
         x = self.max_pool_1D(x)
         x = self.dropout(x)
         
-        # if (self.output_dim >= 64):
-        #     x = self.conv_block_2(x)
-        # # More convolutional blocks based on output_dim
-        # if (self.output_dim >= 128):
-        #     x = self.conv_block_3(x)
-        # if (self.output_dim >= 256):
-        #     x = self.conv_block_4(x)
-        # if (self.output_dim >= 512):
-        #     x = self.conv_block_5(x)
-        # if (self.output_dim >= 1024):
-        #     x = self.conv_block_6(x)
+        if (self.output_dim >= 64):
+            x = self.conv_block_2(x)
+        # More convolutional blocks based on output_dim
+        if (self.output_dim >= 128):
+            x = self.conv_block_3(x)
+        if (self.output_dim >= 256):
+            x = self.conv_block_4(x)
+        if (self.output_dim >= 512):
+            x = self.conv_block_5(x)
+        if (self.output_dim >= 1024):
+            x = self.conv_block_6(x)
         
         return x
        
