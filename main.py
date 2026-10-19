@@ -1,30 +1,66 @@
-import os
-import argparse
-import warnings
-from trainer import trainer
-import sklearn.exceptions
-warnings.filterwarnings("ignore", category=sklearn.exceptions.UndefinedMetricWarning)
+from torch import nn
+from MultiScaleCNN import MultiScaleCNN
+from ResidualN import ResidualBasicBlock
+from torch.nn import functional as F
 
-parser = argparse.ArgumentParser()
+# from ECA import EcaLayer
+# from CBAM1D import CBAM1D
 
-# ========  Experiments Name ================
-parser.add_argument('--save_dir',               default='experiments_logs',         type=str, help='Directory containing all experiments')
-parser.add_argument('--experiment_description', default='Exp1',   type=str, help='experiment name')
-parser.add_argument('--run_description',        default='run1',     type=str, help='run name')
+class Main(nn.Module):
+    def __init__(self, kernel_sizes, upcoming_kernel_size, out_channels, num_se_res_blocks, reduction, n_heads, attention_num_layers, dropout_rate):
+        super(Main, self).__init__()
+        
+        # Multi-scale convolutional layers with different kernel sizes
+        self.multi_scale_cnn = MultiScaleCNN(kernel_sizes=kernel_sizes, 
+                                            upcoming_kernel_size=upcoming_kernel_size,
+                                            output_dim=out_channels,
+                                            dropout_rate=dropout_rate
+                                            )
+                
+        # CRM module
+        self.inplanes = out_channels
+        crm_stride = 1
+        downsample = None
+        if crm_stride != 1 or self.inplanes != self.inplanes * ResidualBasicBlock.expansion:
+            downsample = nn.Sequential(
+                nn.Conv1d(out_channels, out_channels * ResidualBasicBlock.expansion, kernel_size=1, stride=crm_stride, bias=False),
+                nn.BatchNorm1d(out_channels * ResidualBasicBlock.expansion),
+            )
+        
+        self.crm = nn.Sequential(
+            ResidualBasicBlock(
+                out_channels,
+                out_channels,
+                reduction=reduction,
+                stride=crm_stride,
+                downsample=downsample
+            ),
+            *[
+                ResidualBasicBlock(out_channels, out_channels, reduction=reduction)
+                for _ in range(1, num_se_res_blocks)
+            ]
+        )
+        
+        # Transformer encoder for bi-directional attention
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=out_channels, nhead=n_heads, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=attention_num_layers)
+        
+        self.aap = nn.AdaptiveAvgPool1d(1)
+        self.clf = nn.Linear(out_channels, 4)
+        
+    def forward(self, x):
+        # Multi-scale feature extraction
+        x = self.multi_scale_cnn(x)
+        
+        # # Channel recalibration module
+        x = self.crm(x)
+        
+        # # Transformer
+        x = x.permute(0, 2, 1)   
+        x = self.transformer_encoder(x)
+        x = x.permute(0, 2, 1)
 
-# ========= Select the DATASET ==============
-parser.add_argument('--dataset',                default='mit',           type=str, help='mit, ptb')
-parser.add_argument('--seed_id',                default='0',             type=str, help='to fix a seed while training')
-
-# ========= Experiment settings ===============
-parser.add_argument('--data_path',              default=r'data',           type=str,   help='Path containing dataset')
-
-parser.add_argument('--num_runs',               default=1,                 type=int,   help='Number of consecutive run with different seeds')
-parser.add_argument('--device',                 default='cuda',            type=str,   help='cpu or cuda')
-
-
-args = parser.parse_args()
-
-if __name__ == "__main__":
-    trainer = trainer(args)
-    trainer.train()
+        x = self.aap(x)
+        x = x.reshape(x.shape[0], -1)
+        x_out = self.clf(x)
+        return x_out
